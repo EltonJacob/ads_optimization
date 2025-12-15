@@ -1,0 +1,999 @@
+================================================================================
+AMAZON PPC OPTIMIZATION TOOL - PROJECT PLAN V3.0
+================================================================================
+
+PROJECT OVERVIEW
+================================================================================
+An intelligent Amazon PPC optimization tool that fetches campaign data from the
+Amazon Ads API, analyzes keyword performance, and provides actionable bid
+adjustments and optimization recommendations through a web-based interface.
+
+CORE CAPABILITIES:
+1. Fetch Amazon PPC data via Amazon Ads API with configurable date ranges
+2. Fallback to spreadsheet upload when API timeouts occur
+3. Analyze campaign and keyword performance using AI
+4. Generate bid optimization recommendations
+5. Suggest keyword pause/enable decisions
+6. Provide strategic insights to maximize ROI
+7. Web UI for data management and viewing recommendations
+
+BUSINESS GOALS
+================================================================================
+- Maximize ROAS (Return on Ad Spend) across all products
+- Minimize wasted spend on underperforming keywords
+- Automate bid optimization to save time and improve accuracy
+- Identify new keyword opportunities and negative keyword candidates
+- Provide data-driven, AI-powered recommendations with clear reasoning
+
+CURRENT STATUS
+================================================================================
+- Database models: COMPLETE (AdGroup, Keyword, Performance, Decision, Audit)
+- Amazon Ads API integration: PARTIAL (auth working, report fetching has timeouts)
+- Spreadsheet import: COMPLETE (CSV import functional)
+- Web UI: NOT STARTED
+- AI Analysis Engine: NOT STARTED
+
+================================================================================
+ARCHITECTURE OVERVIEW
+================================================================================
+
+BACKEND STACK:
+- Python 3.13
+- FastAPI (REST API framework)
+- SQLAlchemy (ORM for database operations)
+- PostgreSQL or SQLite (Database)
+- Alembic (Database migrations)
+- Amazon Ads API SDK (Data retrieval)
+- OpenAI/Anthropic Claude (AI-powered analysis)
+
+FRONTEND STACK:
+- Next.js 14+ with React
+- TypeScript (Type safety)
+- TailwindCSS (Styling)
+- Recharts/Chart.js (Data visualization)
+- Axios (HTTP client for API calls)
+
+DEPLOYMENT:
+- Docker (Containerization)
+- Environment-based configuration (.env)
+
+================================================================================
+SYSTEM COMPONENTS
+================================================================================
+
+1. DATA INGESTION LAYER
+   - Amazon Ads API client with retry logic and timeout handling
+   - Spreadsheet upload and parsing system (CSV/Excel)
+   - Data validation and normalization
+   - Unified import pipeline for both data sources
+
+2. DATABASE LAYER
+   - Products table (ASIN, name, metadata)
+   - Ad Groups and Campaigns
+   - Keywords (bid, match type, state)
+   - Performance metrics (impressions, clicks, spend, sales, orders)
+   - AI Decisions and recommendations
+   - Audit trail for all changes
+   - Data source tracking (API vs. upload)
+
+3. AI ANALYSIS ENGINE
+   - Bid optimization analyzer
+   - Keyword performance evaluator
+   - Negative keyword suggester
+   - Strategic ROI optimizer
+   - Recommendation generator with confidence scores
+
+4. WEB INTERFACE
+   - Data import page (API fetch + upload fallback)
+   - Campaign dashboard with date range selector
+   - Performance visualization (charts, tables)
+   - Recommendations page with accept/reject actions
+   - Decision history and audit log
+
+5. API LAYER (FastAPI)
+   - Authentication and authorization
+   - Data fetch endpoints
+   - Upload and import endpoints
+   - Performance query endpoints
+   - AI analysis triggers
+   - Recommendation management
+
+================================================================================
+IMPLEMENTATION PHASES
+================================================================================
+
+PHASE 1: BACKEND API FOUNDATION
+================================================================================
+
+1.1 FastAPI Application Setup
+------------------------------
+Tasks:
+- Initialize FastAPI project structure in /agent/ui/
+- Configure CORS middleware for frontend integration
+- Set up async SQLAlchemy session management
+- Create base Pydantic models for API requests/responses
+- Add environment variable configuration (.env support)
+
+Deliverables:
+- agent/ui/api.py - Main FastAPI application
+- agent/ui/models.py - Pydantic request/response models
+- agent/ui/config.py - Configuration management
+- Updated requirements.txt with FastAPI, uvicorn, python-multipart
+
+1.2 Data Fetch API Endpoints
+-----------------------------
+Tasks:
+- Create Amazon API fetch endpoint:
+  * POST /api/fetch - Trigger report fetch for date range
+  * Parameters: profile_id, start_date, end_date, report_type
+  * Async job execution with status tracking
+  * Return job_id for progress monitoring
+
+- Implement fetch status endpoint:
+  * GET /api/fetch/status/{job_id}
+  * Return: status, progress, records_fetched, errors
+
+- Add timeout detection and handling:
+  * Detect API timeout conditions
+  * Return partial data if available
+  * Flag fetch as "incomplete" when timeout occurs
+  * Provide clear error messaging for UI
+
+- Improve fetch_reports.py job:
+  * Add chunked date range fetching (weekly chunks)
+  * Implement retry logic with exponential backoff
+  * Better timeout configuration
+  * Detailed logging for debugging
+
+Deliverables:
+- POST /api/fetch endpoint with async execution
+- GET /api/fetch/status/{job_id} for progress tracking
+- Enhanced agent/jobs/fetch_reports.py with timeout handling
+- Job status tracking in database
+
+1.3 Spreadsheet Upload API
+---------------------------
+Tasks:
+- Create file upload endpoint:
+  * POST /api/upload - Upload CSV/Excel files
+  * File validation (type, size, format)
+  * Store in data/uploads/{profile_id}/{timestamp}_{filename}
+  * Return file metadata and upload_id
+
+- Create import endpoint:
+  * POST /api/import - Process uploaded file
+  * Parameters: upload_id, profile_id, start_date, end_date
+  * Validate required columns exist
+  * Map spreadsheet columns to database schema
+  * Return import summary (rows processed, errors)
+
+- Add data validation:
+  * Required column presence check
+  * Date format validation
+  * Numeric field validation (spend, sales, etc.)
+  * Duplicate detection
+  * Pre-import preview (first 10 rows)
+
+- Extend import_spreadsheet.py:
+  * Add profile/product association
+  * Handle missing keyword IDs (generate from text + match type)
+  * Batch insert for performance
+  * Error handling with detailed messages
+
+Deliverables:
+- POST /api/upload endpoint with file validation
+- POST /api/import endpoint with data validation
+- Enhanced agent/jobs/import_spreadsheet.py
+- Upload file storage system organized by profile
+
+1.4 Performance Query Endpoints
+-------------------------------
+Tasks:
+- Create performance data endpoints:
+  * GET /api/performance/{profile_id} - Get performance data
+  * Query parameters: start_date, end_date, group_by (day/week/month)
+  * Support filtering by campaign, ad_group, match_type, keyword_state
+
+- Add aggregation endpoints:
+  * GET /api/performance/{profile_id}/summary - Overall metrics
+  * Returns: total_spend, total_sales, total_orders, avg_acos, avg_roas
+
+  * GET /api/performance/{profile_id}/keywords - Keyword-level data
+  * Sort by: spend, sales, acos, impressions, clicks
+  * Pagination support
+
+  * GET /api/performance/{profile_id}/trends - Time series data
+  * For charting spend, sales, ACOS over time
+
+- Add data source tracking:
+  * GET /api/performance/{profile_id}/sources - Data source breakdown
+  * Show which date ranges have API data vs. uploaded data
+  * Highlight data gaps
+
+Deliverables:
+- Performance query endpoints with filtering
+- Aggregation and summary endpoints
+- Time series endpoints for charts
+- Data source visibility endpoint
+
+================================================================================
+PHASE 2: WEB UI FOUNDATION
+================================================================================
+
+2.1 Next.js Project Setup
+--------------------------
+Tasks:
+- Initialize Next.js project in /frontend directory
+- Configure TypeScript
+- Set up TailwindCSS with custom theme
+- Create API client utility (axios wrapper)
+- Set up environment variables for API URL
+- Create layout components (header, sidebar, navigation)
+- Add routing structure
+
+Pages to create:
+- /dashboard - Main landing page
+- /data-import - Data fetch and upload page
+- /campaigns - Campaign performance view
+- /recommendations - AI recommendations page
+- /history - Decision history and audit log
+
+Deliverables:
+- /frontend directory with Next.js + TypeScript
+- Configured TailwindCSS
+- Base layout and navigation
+- API client utility
+- Page routing structure
+
+2.2 Data Import Interface
+--------------------------
+Tasks:
+- Build dual-mode data import page:
+
+  Mode 1: Amazon API Fetch
+  * Profile selector dropdown
+  * Date range picker (with presets: 7, 30, 60, 90 days)
+  * "Fetch from Amazon API" button
+  * Real-time progress indicator
+  * Display: records fetched, time elapsed
+  * Success/error messaging
+  * Timeout detection with clear guidance
+
+  Mode 2: Spreadsheet Upload (Fallback)
+  * Drag-and-drop file upload area
+  * File type indicator (CSV, XLSX supported)
+  * Upload progress bar
+  * File validation feedback
+  * Preview table (first 10 rows)
+  * Column mapping interface (if needed)
+  * "Import Data" button
+  * Import summary (rows added, skipped, errors)
+
+- Add import history section:
+  * Table showing: date, method (API/Upload), status, records, errors
+  * Filter by date range and status
+  * Link to view detailed error logs
+
+- Add helpful tooltips and guidance:
+  * When to use API vs. upload
+  * How to handle timeout scenarios
+  * Required spreadsheet format and column names
+
+Deliverables:
+- Data import page with API fetch and upload modes
+- File upload with drag-and-drop
+- Date range picker with presets
+- Real-time progress tracking
+- Import history table
+
+2.3 Campaign Performance Dashboard
+-----------------------------------
+Tasks:
+- Build main dashboard page:
+  * Profile selector
+  * Date range selector
+  * "Pull Data" button to fetch from API
+
+- Key metrics cards (top of page):
+  * Total Spend (with trend vs. previous period)
+  * Total Sales (with trend)
+  * Total Orders (with trend)
+  * Average ACOS (with target indicator)
+  * Average ROAS (with trend)
+  * Click-Through Rate (CTR)
+  * Conversion Rate
+
+- Performance trends chart:
+  * Line chart showing spend, sales, orders over time
+  * Adjustable time granularity (daily, weekly, monthly)
+  * Toggle lines on/off
+
+- Keyword performance table:
+  * Columns: keyword, match_type, bid, impressions, clicks, CTR,
+            spend, sales, ACOS, orders, state
+  * Sortable by any column
+  * Filter by match type, state, campaign, ad group
+  * Performance threshold filters (e.g., ACOS > 30%)
+  * Pagination (50 rows per page)
+  * Row highlighting for top/bottom performers
+
+- Campaign rollup view:
+  * Group by campaign
+  * Show campaign-level metrics
+  * Expandable to see ad groups
+
+- Export functionality:
+  * Export to CSV
+  * Export to Excel
+  * Export filtered data only
+
+Deliverables:
+- Campaign performance dashboard
+- Key metrics cards with trend indicators
+- Interactive performance chart
+- Keyword performance table with sorting and filtering
+- Campaign rollup view
+- Export functionality
+
+================================================================================
+PHASE 3: AI ANALYSIS ENGINE
+================================================================================
+
+3.1 AI Integration Setup
+-------------------------
+Tasks:
+- Choose AI provider (OpenAI GPT-4 or Anthropic Claude)
+- Create AI client service:
+  * agent/ai/client.py - Wrapper for AI API
+  * Configuration for API keys, model selection
+  * Error handling and retry logic
+  * Token usage tracking
+
+- Design prompt templates:
+  * Structured JSON output format
+  * Include relevant performance context
+  * Request confidence scores for recommendations
+  * Ask for clear reasoning for each suggestion
+
+Deliverables:
+- agent/ai/client.py - AI service wrapper
+- agent/ai/prompts.py - Prompt templates
+- Configuration in .env for AI provider
+
+3.2 Bid Optimization Analyzer
+------------------------------
+Tasks:
+- Build bid analysis system:
+  * Input: keyword performance data, target ACOS, current bid
+  * Analysis factors:
+    - Historical ACOS vs. target
+    - Conversion rate trends
+    - Spend velocity
+    - Competitive positioning (if data available)
+    - Keyword match type
+    - Days since last bid change
+
+- Generate bid recommendations:
+  * Increase bid (conditions):
+    - ACOS below target AND conversion rate good
+    - Losing impression share
+    - High CTR but low impressions
+
+  * Decrease bid (conditions):
+    - ACOS above target for sustained period
+    - Low conversion rate
+    - Diminishing returns detected
+
+  * Maintain bid (conditions):
+    - ACOS near target
+    - Stable performance
+
+- Calculate optimal bid amount:
+  * Use historical ACOS and target ACOS to calculate ratio
+  * Apply bid adjustment percentage (usually 5-20%)
+  * Respect min/max bid constraints
+  * Round to 2 decimal places
+
+- Include reasoning:
+  * Why bid should change
+  * Expected impact on ACOS and spend
+  * Confidence level (0-100%)
+  * Risk assessment
+
+Deliverables:
+- agent/ai/analyzers/bid_optimizer.py
+- Bid adjustment recommendations with:
+  * keyword_id
+  * current_bid
+  * recommended_bid
+  * adjustment_percentage
+  * reasoning
+  * confidence_score
+  * expected_impact
+
+3.3 Keyword Management Analyzer
+--------------------------------
+Tasks:
+- Build keyword pause analyzer:
+  * Identify keywords to pause:
+    - Zero orders after X impressions (e.g., 5000)
+    - ACOS > 2x target for Y days (e.g., 14 days)
+    - Consistent low CTR (< 0.2%) with spend
+    - Spend > $Z with no conversions (e.g., $50)
+
+  * Provide reasoning:
+    - Summary of poor performance
+    - Amount wasted
+    - Confidence in decision
+
+- Build keyword enable analyzer:
+  * Identify paused keywords to re-enable:
+    - Previously paused for poor performance
+    - Market conditions may have changed
+    - Related keywords now performing well
+    - Seasonal opportunity
+
+  * Provide reasoning and suggested starting bid
+
+- Build negative keyword suggester:
+  * Analyze search terms (if available):
+    - High spend, no conversions
+    - Irrelevant search queries
+    - Branded competitor terms
+
+  * Suggest exact negative keywords:
+    - Grouped by theme
+    - Estimated waste prevented
+
+  * Recommend negative keyword lists
+
+Deliverables:
+- agent/ai/analyzers/keyword_optimizer.py
+- Keyword pause recommendations with reasoning
+- Keyword enable recommendations with suggested bids
+- Negative keyword suggestions with themes
+
+3.4 Strategic ROI Analyzer
+---------------------------
+Tasks:
+- Build strategic optimization system:
+
+  Budget Allocation Analysis:
+  * Compare performance across all campaigns/products
+  * Identify budget-constrained high performers
+  * Suggest budget redistribution
+  * Calculate expected ROI lift from reallocation
+
+  Cross-Product Insights:
+  * Compare products side-by-side
+  * Identify best performers for increased investment
+  * Find underperformers for budget reduction
+  * Detect keyword cannibalization between products
+
+  Trend Detection:
+  * Analyze performance over time
+  * Detect improving/declining trends
+  * Identify day-of-week patterns
+  * Seasonal opportunity detection
+
+  Cost Reduction Opportunities:
+  * Find keyword overlap within campaigns
+  * Identify match type inefficiencies
+  * Detect diminishing returns on high spenders
+  * Suggest consolidation opportunities
+
+- Generate comprehensive report:
+  * Executive summary (top 3-5 insights)
+  * Quick wins (high impact, easy to implement)
+  * Strategic recommendations (longer-term changes)
+  * Expected impact on spend, ACOS, and revenue
+  * Risk assessment for each recommendation
+
+Deliverables:
+- agent/ai/analyzers/strategy_optimizer.py
+- Strategic recommendations report:
+  * Budget reallocation suggestions
+  * Cross-product insights
+  * Trend-based opportunities
+  * Cost reduction strategies
+  * Expected ROI impact for each recommendation
+
+3.5 Master Recommendation Engine
+---------------------------------
+Tasks:
+- Create unified recommendation generator:
+  * agent/ai/recommendation_engine.py
+  * Orchestrates all analyzers
+  * Input: profile_id, date_range, analysis_parameters
+
+- Generate recommendations endpoint:
+  * POST /api/recommendations/generate
+  * Parameters: profile_id, start_date, end_date, options
+  * Run all analyzers in parallel (async)
+  * Aggregate results
+  * Rank by priority and expected impact
+  * Store recommendations in database
+  * Return recommendation_batch_id
+
+- Retrieve recommendations endpoint:
+  * GET /api/recommendations/{batch_id}
+  * Categorized by type:
+    - bid_adjustments
+    - keywords_to_pause
+    - keywords_to_enable
+    - negative_keywords
+    - strategic_insights
+  * Include metadata: generated_at, analyzed_date_range, total_count
+
+Deliverables:
+- agent/ai/recommendation_engine.py
+- POST /api/recommendations/generate endpoint
+- GET /api/recommendations/{batch_id} endpoint
+- Recommendation storage in database
+- Unified recommendation format
+
+================================================================================
+PHASE 4: RECOMMENDATIONS UI AND ACTIONS
+================================================================================
+
+4.1 Recommendations Dashboard
+------------------------------
+Tasks:
+- Build AI recommendations page:
+  * Profile selector
+  * Date range for analysis
+  * "Generate Recommendations" button
+  * Analysis progress indicator
+  * Last analysis timestamp
+
+- Display recommendations by category:
+
+  1. Bid Adjustments Tab:
+     * Table columns: keyword, campaign, current_bid, recommended_bid,
+                     change_%, reasoning, confidence, expected_impact
+     * Color coding: green (increase), red (decrease), gray (maintain)
+     * Sortable by impact, confidence, change %
+     * Bulk select checkboxes
+     * "Apply Selected" and "Apply All" buttons
+
+  2. Keywords to Pause Tab:
+     * Table columns: keyword, campaign, spend, orders, ACOS, reasoning,
+                     confidence, wasted_spend
+     * Highlight high-waste keywords
+     * "Pause Selected" button
+
+  3. Keywords to Enable Tab:
+     * Table columns: keyword, campaign, paused_date, reason_to_enable,
+                     suggested_bid, confidence
+     * "Enable Selected" button
+
+  4. Negative Keywords Tab:
+     * Grouped by theme
+     * Table columns: search_term, spend, impressions, clicks, orders,
+                     suggested_negative_type (exact/phrase)
+     * "Add to Negative List" button
+
+  5. Strategic Insights Tab:
+     * Executive summary section
+     * Quick wins list
+     * Strategic recommendations
+     * Expected impact summary (spend, ACOS, revenue)
+     * No direct actions, informational only
+
+- Add action modals:
+  * Modify recommendation before applying
+  * Confirm bulk actions
+  * Show expected impact summary
+  * Option to apply now or schedule
+
+- Add filtering and search:
+  * Filter by confidence level
+  * Filter by expected impact
+  * Search by keyword or campaign
+  * Show/hide already applied recommendations
+
+Deliverables:
+- AI Recommendations page with tabbed interface
+- Categorized recommendation displays
+- Action buttons for each category
+- Modify and confirm modals
+- Filtering and search functionality
+- Impact summary visualization
+
+4.2 Apply Recommendations System
+---------------------------------
+Tasks:
+- Create recommendation application endpoints:
+  * POST /api/recommendations/{id}/apply - Apply single recommendation
+  * POST /api/recommendations/apply-bulk - Apply multiple recommendations
+  * Parameters: recommendation_ids[], apply_immediately (bool)
+
+- Implement application logic:
+  * Update keyword bid in database
+  * Update keyword state (enabled/paused)
+  * Create Decision record with:
+    - decision_type (bid_change, pause_keyword, enable_keyword, etc.)
+    - old_value
+    - new_value
+    - reasoning (from AI)
+    - applied_at (timestamp)
+    - applied_by (user or 'system')
+  * Mark recommendation as applied
+
+- Add Amazon API integration for live updates:
+  * Update keyword bid via Amazon Ads API
+  * Update keyword state via API
+  * Handle API errors gracefully:
+    - Queue for retry if temporary failure
+    - Revert database change if API fails
+    - Log errors for manual review
+  * Success confirmation message
+
+- Build decision history endpoint:
+  * GET /api/decisions
+  * Parameters: profile_id, start_date, end_date, action_type
+  * Returns: all applied decisions with before/after values
+  * Include outcome tracking (TBD in future: did performance improve?)
+
+Deliverables:
+- POST /api/recommendations/{id}/apply endpoint
+- POST /api/recommendations/apply-bulk endpoint
+- Decision tracking in database
+- Amazon API integration for applying changes
+- Error handling and retry logic
+- GET /api/decisions endpoint
+
+4.3 Decision History & Audit UI
+--------------------------------
+Tasks:
+- Build decision history page:
+  * Table columns: date, keyword, campaign, action_type, old_value,
+                  new_value, reasoning, applied_by
+  * Filter by date range, action type, campaign
+  * Search by keyword
+  * Export to CSV
+
+- Add undo functionality (optional):
+  * "Revert" button for recent changes (last 24-48 hours)
+  * Confirm before reverting
+  * Create new Decision record for the revert action
+  * Update via Amazon API
+
+- Add audit log viewer:
+  * System events log
+  * All automated actions
+  * Manual actions
+  * API calls and responses
+  * Errors and warnings
+  * Filterable by type, severity, date
+
+Deliverables:
+- Decision history page with filtering
+- Undo/revert functionality
+- Audit log viewer
+- Export functionality
+
+================================================================================
+PHASE 5: TESTING, DOCUMENTATION & DEPLOYMENT
+================================================================================
+
+5.1 Integration Testing
+------------------------
+Tasks:
+- End-to-end workflow testing:
+  * API fetch → analysis → recommendations → apply
+  * Upload spreadsheet → analysis → recommendations → apply
+  * Test with timeout scenarios
+  * Test error handling paths
+  * Test with multiple profiles/products
+
+- API testing:
+  * Test all endpoints with Postman/curl
+  * Test with invalid inputs
+  * Test authentication
+  * Test rate limiting
+
+- Frontend testing:
+  * Test all user workflows
+  * Test on different browsers
+  * Test responsive design
+  * Test with large datasets
+
+- Performance testing:
+  * Load test with 10k+ keywords
+  * Optimize database queries
+  * Add pagination where needed
+  * Implement caching for frequently accessed data
+
+Deliverables:
+- Test suite for critical paths
+- Performance optimizations
+- Bug fixes
+
+5.2 Documentation
+-----------------
+Tasks:
+- User documentation:
+  * Quick start guide
+  * How to fetch data from Amazon API
+  * How to upload spreadsheet (with template)
+  * Understanding recommendations
+  * Applying optimizations safely
+  * Troubleshooting common issues
+
+- Technical documentation:
+  * API documentation (Swagger/OpenAPI auto-generated)
+  * Database schema diagram
+  * Architecture overview
+  * Environment variables reference
+  * Deployment guide
+
+- Code documentation:
+  * Docstrings for all major functions
+  * Inline comments for complex logic
+  * README.md with setup instructions
+
+Deliverables:
+- Complete user guide
+- API documentation
+- Technical documentation
+- Setup and deployment guide
+
+5.3 Deployment Preparation
+---------------------------
+Tasks:
+- Docker containerization:
+  * Dockerfile for backend
+  * Dockerfile for frontend
+  * docker-compose.yml for local development
+  * Environment variable configuration
+
+- Database setup:
+  * Migration scripts (Alembic)
+  * Seed data script (optional)
+  * Backup and restore procedures
+
+- Deployment guide:
+  * Local development setup
+  * Production deployment (AWS/DigitalOcean/Vercel)
+  * Environment configuration
+  * SSL/HTTPS setup
+  * Monitoring and logging setup
+
+- Security checklist:
+  * API authentication
+  * File upload validation
+  * Input sanitization
+  * Secrets management (.env, not in repo)
+  * HTTPS enforcement
+
+Deliverables:
+- Docker configuration files
+- Database migration scripts
+- Deployment guide
+- Security checklist completed
+
+================================================================================
+DATA FLOW DIAGRAM
+================================================================================
+
+USER REQUEST (Web UI)
+    |
+    v
+[Select Date Range] → [Choose Method: API or Upload]
+    |                           |
+    v                           v
+[API Fetch]              [Upload Spreadsheet]
+    |                           |
+    | (timeout?)                |
+    |---> NO --> [Success]      |
+    |             |              |
+    |---> YES --> [Fallback] ----+
+    |                           |
+    v                           v
+    [DATA VALIDATION & IMPORT]
+              |
+              v
+    [STORED IN DATABASE]
+              |
+              v
+    [USER VIEWS CAMPAIGNS]
+              |
+              v
+    [USER TRIGGERS AI ANALYSIS]
+              |
+              v
+    [AI ANALYZERS RUN IN PARALLEL]
+      - Bid Optimizer
+      - Keyword Optimizer
+      - Strategy Optimizer
+              |
+              v
+    [RECOMMENDATIONS GENERATED]
+              |
+              v
+    [USER REVIEWS RECOMMENDATIONS]
+              |
+              v
+    [USER APPLIES SELECTED RECOMMENDATIONS]
+              |
+              v
+    [UPDATE DATABASE + AMAZON API]
+              |
+              v
+    [DECISION LOGGED IN HISTORY]
+              |
+              v
+    [MONITOR PERFORMANCE OVER TIME]
+
+================================================================================
+API ENDPOINT REFERENCE
+================================================================================
+
+DATA INGESTION:
+- POST   /api/fetch                    Trigger Amazon API fetch
+- GET    /api/fetch/status/{job_id}    Check fetch status
+- POST   /api/upload                   Upload spreadsheet file
+- POST   /api/import                   Import uploaded file
+
+PERFORMANCE DATA:
+- GET    /api/performance/{profile_id}         Get performance data
+- GET    /api/performance/{profile_id}/summary Get summary metrics
+- GET    /api/performance/{profile_id}/keywords Get keyword-level data
+- GET    /api/performance/{profile_id}/trends   Get time series data
+- GET    /api/performance/{profile_id}/sources  Get data source info
+
+RECOMMENDATIONS:
+- POST   /api/recommendations/generate         Generate recommendations
+- GET    /api/recommendations/{batch_id}       Get recommendations
+- POST   /api/recommendations/{id}/apply       Apply single recommendation
+- POST   /api/recommendations/apply-bulk       Apply multiple recommendations
+
+DECISIONS & AUDIT:
+- GET    /api/decisions                        Get decision history
+- POST   /api/decisions/{id}/revert            Revert a decision (undo)
+- GET    /api/audit                            Get audit log
+
+SYSTEM:
+- GET    /api/health                           Health check
+- GET    /api/profiles                         List Amazon profiles
+
+================================================================================
+DATABASE SCHEMA SUMMARY
+================================================================================
+
+Tables:
+1. profiles - Amazon Ads profiles (profile_id, name, marketplace)
+2. campaigns - Campaign information
+3. ad_groups - Ad group information
+4. keywords - Keyword data (bid, match_type, state, etc.)
+5. performance - Daily performance metrics
+6. recommendations - AI-generated recommendations
+7. decisions - Applied recommendations and changes
+8. data_sources - Track origin of data (API vs. upload)
+9. audit_log - System audit trail
+
+Key Relationships:
+- performance → keywords (many-to-one)
+- keywords → ad_groups (many-to-one)
+- ad_groups → campaigns (many-to-one)
+- campaigns → profiles (many-to-one)
+- recommendations → keywords (many-to-one)
+- decisions → recommendations (one-to-one, optional)
+
+================================================================================
+SUCCESS METRICS
+================================================================================
+
+Technical Metrics:
+- Data fetch success rate: >95% (API + fallback upload)
+- API response time: <2 seconds for queries
+- UI load time: <3 seconds
+- Recommendation generation time: <30 seconds for 1000 keywords
+
+Business Metrics:
+- ACOS improvement: Average 15%+ reduction after applying recommendations
+- Time savings: Reduce optimization time from hours to <30 minutes
+- ROAS improvement: Minimum 20% increase
+- User adoption: Daily active usage for campaign management
+
+System Metrics:
+- Uptime: 99%+ availability
+- Error rate: <1% of API calls
+- Data accuracy: 100% match between source and database
+
+================================================================================
+RISK MITIGATION STRATEGIES
+================================================================================
+
+Risk: Amazon API timeouts persist
+Mitigation: Robust spreadsheet upload, chunked date fetching, retry logic
+
+Risk: AI recommendations are inaccurate or risky
+Mitigation: Confidence scores, manual review for large changes, gradual rollout
+
+Risk: Data quality issues from manual uploads
+Mitigation: Strict validation, template enforcement, preview before import
+
+Risk: Over-optimization causes bid wars
+Mitigation: Safety limits on bid changes, human approval for large changes
+
+Risk: Security vulnerabilities in file upload
+Mitigation: File type/size validation, sandboxed processing, input sanitization
+
+Risk: API rate limits from Amazon
+Mitigation: Request throttling, queue management, backoff strategy
+
+================================================================================
+FUTURE ENHANCEMENTS (POST-MVP)
+================================================================================
+
+- Automated scheduling: Run analysis and auto-apply safe recommendations daily
+- A/B testing framework: Test bid strategies on subset of keywords
+- Custom rules engine: User-defined optimization rules
+- Campaign-level analysis: Beyond keywords (placements, product targeting)
+- Advanced forecasting: ML models for seasonality and trends
+- Email/Slack notifications: Daily summary, anomaly alerts
+- Multi-user support: Role-based access control
+- Mobile app: View performance and approve recommendations on-the-go
+- Integration with other Amazon APIs: Product, Seller Central
+- White-label solution: For agencies managing multiple clients
+
+================================================================================
+DEVELOPMENT TIMELINE ESTIMATE
+================================================================================
+
+Phase 1: Backend API Foundation       - 4-5 days
+Phase 2: Web UI Foundation             - 4-5 days
+Phase 3: AI Analysis Engine            - 3-4 days
+Phase 4: Recommendations UI & Actions  - 3-4 days
+Phase 5: Testing & Deployment          - 2-3 days
+
+TOTAL ESTIMATED TIME: 16-21 days (3-4 weeks)
+
+This is a high-level estimate. Actual time may vary based on:
+- API complexity and timeout resolution
+- AI prompt engineering and tuning
+- UI/UX iterations
+- Testing and bug fixes
+- Documentation depth
+
+================================================================================
+GETTING STARTED CHECKLIST
+================================================================================
+
+Prerequisites:
+[ ] Python 3.13 installed
+[ ] Node.js 18+ installed
+[ ] PostgreSQL or SQLite database
+[ ] Amazon Ads API access (client ID, secret, refresh token)
+[ ] OpenAI or Anthropic API key
+
+Setup Steps:
+[ ] Clone/setup repository
+[ ] Install Python dependencies (pip install -r requirements.txt)
+[ ] Configure .env file with API keys and database URL
+[ ] Run database migrations (alembic upgrade head)
+[ ] Install frontend dependencies (cd frontend && npm install)
+[ ] Start backend (uvicorn agent.ui.api:app --reload)
+[ ] Start frontend (cd frontend && npm run dev)
+[ ] Test API health endpoint
+[ ] Test data fetch or upload
+[ ] Generate first recommendations
+
+================================================================================
+CONTACT & SUPPORT
+================================================================================
+
+For questions, issues, or feature requests:
+- Review documentation in /docs
+- Check logs in /logs directory
+- Review API docs at http://localhost:8000/docs (when running)
+
+================================================================================
+END OF PROJECT PLAN
+================================================================================
+
+Version: 3.0
+Last Updated: 2025-12-15
+Next Review: After Phase 1 completion
