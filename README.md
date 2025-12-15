@@ -107,32 +107,33 @@ pip install -r requirements.txt
 
 #### Configure Environment Variables
 
-Create a `.env` file in the project root:
+A `.env` file has been created with default values. **You must update it with your actual credentials.**
+
+**Quick Setup:**
+
+1. Open the `.env` file in the project root
+2. Add your Amazon Ads API credentials
+3. Add your AI provider API key (OpenAI or Anthropic)
+4. Optionally adjust optimization parameters
+
+**For detailed configuration instructions, see:** [ENV_SETUP_GUIDE.md](ENV_SETUP_GUIDE.md)
+
+**Minimum required settings:**
 
 ```bash
-# Database Configuration
-DATABASE_URL=postgresql://username:password@localhost:5432/amazon_ppc
-# Or for SQLite:
-# DATABASE_URL=sqlite:///./data/amazon_ppc.db
+# Amazon Ads API (REQUIRED)
+AMAZON_ADS_CLIENT_ID=your_client_id_here
+AMAZON_ADS_CLIENT_SECRET=your_client_secret_here
+AMAZON_ADS_REFRESH_TOKEN=your_refresh_token_here
 
-# Amazon Ads API
-AMAZON_CLIENT_ID=your_client_id
-AMAZON_CLIENT_SECRET=your_client_secret
-AMAZON_REFRESH_TOKEN=your_refresh_token
+# AI Provider (REQUIRED - choose one)
+OPENAI_API_KEY=your_openai_key_here
+# OR
+ANTHROPIC_API_KEY=your_anthropic_key_here
+AI_PROVIDER=openai  # or anthropic
 
-# AI Provider (choose one)
-OPENAI_API_KEY=your_openai_api_key
-# Or:
-ANTHROPIC_API_KEY=your_anthropic_api_key
-
-# Application Settings
-API_HOST=0.0.0.0
-API_PORT=8000
-DEBUG=True
-LOG_LEVEL=INFO
-
-# Frontend URL (for CORS)
-FRONTEND_URL=http://localhost:3000
+# Database (default SQLite works out of the box)
+DATABASE_URL=sqlite:///amazon_ppc.db
 ```
 
 #### Initialize Database
