@@ -10,3 +10,4 @@ python-multipart>=0.0.9,<0.1.0
 sqlalchemy[asyncio]>=2.0,<3.0
 aiosqlite>=0.20,<0.21
 asyncpg>=0.29,<0.30
+openpyxl>=3.1,<4.0

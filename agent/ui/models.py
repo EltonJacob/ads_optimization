@@ -102,25 +102,72 @@ class UploadResponse(BaseModel):
     """Response from file upload."""
     upload_id: str
     filename: str
+    file_type: str
     size_bytes: int
+    upload_path: str
     uploaded_at: datetime
+    message: str
+
+
+class UploadValidationError(BaseModel):
+    """File upload validation error."""
+    field: str
+    message: str
+
+
+class FilePreviewRow(BaseModel):
+    """Preview row from uploaded file."""
+    row_number: int
+    data: dict[str, Any]
+
+
+class FilePreviewResponse(BaseModel):
+    """Preview of uploaded file."""
+    upload_id: str
+    filename: str
+    total_rows: int
+    preview_rows: list[FilePreviewRow]
+    detected_columns: list[str]
+    missing_columns: list[str]
+    validation_errors: list[UploadValidationError] = Field(default_factory=list)
 
 
 class ImportRequest(BaseModel):
     """Request to import uploaded file."""
     upload_id: str
     profile_id: str
-    start_date: date
-    end_date: date
+    start_date: Optional[date] = Field(
+        None,
+        description="Start date for date range filter (optional, uses dates from file if not provided)"
+    )
+    end_date: Optional[date] = Field(
+        None,
+        description="End date for date range filter (optional, uses dates from file if not provided)"
+    )
 
 
 class ImportResponse(BaseModel):
     """Response from import operation."""
     success: bool
+    job_id: str
     rows_processed: int
     rows_added: int
     rows_skipped: int
     errors: list[str] = Field(default_factory=list)
+    message: str
+
+
+class ImportStatusResponse(BaseModel):
+    """Status of an import job."""
+    job_id: str
+    status: JobStatus
+    progress: Optional[float] = Field(None, ge=0, le=100, description="Progress percentage")
+    rows_processed: int = 0
+    rows_added: int = 0
+    rows_skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
 
 # ============================================================================

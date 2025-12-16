@@ -5,18 +5,104 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent.config import settings
 from agent.context import generate_job_id
-from agent.jobs import fetch_reports
+from agent.jobs import fetch_reports, import_spreadsheet
 from agent.jobs.job_tracker import JobStatus, get_tracker
-from agent.ui.models import FetchRequest, FetchResponse, FetchStatusResponse
+from agent.ui import file_utils
+from agent.ui.models import (
+    FetchRequest,
+    FetchResponse,
+    FetchStatusResponse,
+    FilePreviewResponse,
+    FilePreviewRow,
+    ImportRequest,
+    ImportResponse,
+    ImportStatusResponse,
+    UploadResponse,
+    UploadValidationError,
+)
 
 logger = logging.getLogger(__name__)
+
+
+async def import_spreadsheet_async(job_id: str, file_path: str, profile_id: str) -> None:
+    """Import spreadsheet file as a background job.
+
+    Args:
+        job_id: Unique job identifier for tracking
+        file_path: Path to the uploaded file
+        profile_id: Amazon Ads profile ID
+    """
+    tracker = get_tracker()
+
+    try:
+        # Update job status to in_progress
+        await tracker.update_job(job_id, status=JobStatus.IN_PROGRESS, progress=10.0)
+
+        # Run the import synchronously (import_spreadsheet.run is not async)
+        logger.info(f"Starting import for job {job_id}: {file_path}")
+
+        # Import the file
+        records = []
+        file_path_obj = Path(file_path)
+        suffix = file_path_obj.suffix.lower()
+
+        if suffix == ".csv":
+            records = import_spreadsheet.import_csv(file_path_obj)
+        elif suffix in (".xlsx", ".xls"):
+            records = import_spreadsheet.import_excel(file_path_obj)
+        else:
+            raise ValueError(f"Unsupported file type: {suffix}")
+
+        await tracker.update_job(job_id, progress=50.0)
+
+        if not records:
+            await tracker.update_job(
+                job_id,
+                status=JobStatus.COMPLETED,
+                progress=100.0,
+                error="No valid records found in file"
+            )
+            return
+
+        # Persist to database
+        from agent.data import dao
+        persisted = dao.upsert_performance(records)
+
+        # Update job status with results
+        job = await tracker.get_job(job_id)
+        if job and job.metadata:
+            job.metadata["rows_processed"] = len(records)
+            job.metadata["rows_added"] = persisted
+            job.metadata["rows_skipped"] = len(records) - persisted
+
+        await tracker.update_job(
+            job_id,
+            status=JobStatus.COMPLETED,
+            progress=100.0,
+            records_fetched=persisted
+        )
+
+        logger.info(
+            f"Import job {job_id} completed: {len(records)} records processed, "
+            f"{persisted} persisted to database"
+        )
+
+    except Exception as exc:
+        logger.error(f"Import job {job_id} failed: {exc}", exc_info=True)
+        await tracker.update_job(
+            job_id,
+            status=JobStatus.FAILED,
+            error=str(exc)
+        )
 
 
 @asynccontextmanager
@@ -156,6 +242,260 @@ def register_routes(app: FastAPI) -> None:
             status=job.status,
             progress=job.progress,
             records_fetched=job.records_fetched,
+            errors=job.errors,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+        )
+
+    # ========================================================================
+    # UPLOAD & IMPORT ENDPOINTS
+    # ========================================================================
+
+    @app.post("/api/upload", response_model=UploadResponse)
+    async def upload_file(
+        file: UploadFile = File(..., description="CSV or Excel file to upload"),
+        profile_id: str = Form(..., description="Amazon Ads profile ID"),
+    ):
+        """Upload a spreadsheet file for import.
+
+        This endpoint accepts CSV or Excel files containing keyword performance data.
+        The file is validated and stored for later import.
+
+        Args:
+            file: The uploaded file (CSV or Excel)
+            profile_id: Amazon Ads profile ID for organizing uploads
+
+        Returns:
+            UploadResponse with upload_id and file metadata
+
+        Raises:
+            HTTPException: 400 if validation fails
+        """
+        # Validate file type
+        is_valid, error_msg = file_utils.validate_file_type(file.filename or "")
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        # Read file to check size
+        content = await file.read()
+        file_size = len(content)
+
+        # Validate file size
+        is_valid, error_msg = file_utils.validate_file_size(file_size)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        # Reset file pointer for saving
+        await file.seek(0)
+
+        # Generate upload ID and get storage path
+        upload_id = file_utils.generate_upload_id()
+        upload_path = file_utils.get_upload_path(upload_id, file.filename or "file", profile_id)
+
+        # Save file
+        bytes_written = await file_utils.save_upload_file(file, upload_path)
+
+        logger.info(
+            f"File uploaded: {upload_id} - {file.filename} ({bytes_written} bytes) "
+            f"for profile {profile_id}"
+        )
+
+        return UploadResponse(
+            upload_id=upload_id,
+            filename=file.filename or "unknown",
+            file_type=upload_path.suffix,
+            size_bytes=bytes_written,
+            upload_path=str(upload_path),
+            uploaded_at=datetime.now(),
+            message=f"File uploaded successfully. Use upload_id '{upload_id}' to import."
+        )
+
+    @app.get("/api/upload/{upload_id}/preview", response_model=FilePreviewResponse)
+    async def preview_upload(upload_id: str):
+        """Preview uploaded file contents and validate columns.
+
+        This endpoint returns a preview of the first 10 rows and validates
+        that all required columns are present.
+
+        Args:
+            upload_id: The upload identifier from POST /api/upload
+
+        Returns:
+            FilePreviewResponse with preview rows and validation results
+
+        Raises:
+            HTTPException: 404 if file not found
+        """
+        # Find the uploaded file
+        upload_dir = Path("data/uploads")
+        uploaded_files = list(upload_dir.rglob(f"{upload_id}.*"))
+
+        if not uploaded_files:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Upload {upload_id} not found"
+            )
+
+        file_path = uploaded_files[0]
+
+        # Validate columns
+        file_ext = file_path.suffix.lower()
+        if file_ext == ".csv":
+            detected_columns, missing_columns = file_utils.validate_csv_columns(file_path)
+        elif file_ext in (".xlsx", ".xls"):
+            detected_columns, missing_columns = file_utils.validate_excel_columns(file_path)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {file_ext}"
+            )
+
+        # Get file preview
+        preview_data, total_rows = file_utils.get_file_preview(file_path, max_rows=10)
+
+        # Convert to preview rows
+        preview_rows = [
+            FilePreviewRow(row_number=i + 1, data=row)
+            for i, row in enumerate(preview_data)
+        ]
+
+        # Build validation errors
+        validation_errors = []
+        if missing_columns:
+            validation_errors.append(
+                UploadValidationError(
+                    field="columns",
+                    message=f"Missing required columns: {', '.join(missing_columns)}"
+                )
+            )
+
+        return FilePreviewResponse(
+            upload_id=upload_id,
+            filename=file_path.name,
+            total_rows=total_rows,
+            preview_rows=preview_rows,
+            detected_columns=detected_columns,
+            missing_columns=missing_columns,
+            validation_errors=validation_errors,
+        )
+
+    @app.post("/api/import", response_model=ImportResponse)
+    async def import_file(request: ImportRequest, background_tasks: BackgroundTasks):
+        """Import uploaded spreadsheet file into database.
+
+        This endpoint processes an uploaded file and imports the keyword performance
+        data into the database. The import runs as a background job.
+
+        Args:
+            request: ImportRequest with upload_id, profile_id, and optional date range
+            background_tasks: FastAPI background task manager
+
+        Returns:
+            ImportResponse with job_id and initial status
+
+        Raises:
+            HTTPException: 404 if upload not found, 400 if validation fails
+        """
+        # Find the uploaded file
+        upload_dir = Path("data/uploads")
+        uploaded_files = list(upload_dir.rglob(f"{request.upload_id}.*"))
+
+        if not uploaded_files:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Upload {request.upload_id} not found"
+            )
+
+        file_path = uploaded_files[0]
+
+        # Validate columns before starting import
+        file_ext = file_path.suffix.lower()
+        if file_ext == ".csv":
+            detected_columns, missing_columns = file_utils.validate_csv_columns(file_path)
+        elif file_ext in (".xlsx", ".xls"):
+            detected_columns, missing_columns = file_utils.validate_excel_columns(file_path)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {file_ext}"
+            )
+
+        if missing_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required columns: {', '.join(missing_columns)}. "
+                       f"Please ensure your file has: {', '.join(file_utils.REQUIRED_COLUMNS)}"
+            )
+
+        # Generate job ID
+        job_id = generate_job_id("import")
+
+        # Create job entry in tracker
+        tracker = get_tracker()
+        await tracker.create_job(
+            job_id=job_id,
+            job_type="import",
+            metadata={
+                "upload_id": request.upload_id,
+                "profile_id": request.profile_id,
+                "file_path": str(file_path),
+                "start_date": str(request.start_date) if request.start_date else None,
+                "end_date": str(request.end_date) if request.end_date else None,
+            }
+        )
+
+        # Start the import job in the background
+        background_tasks.add_task(
+            import_spreadsheet_async,
+            job_id=job_id,
+            file_path=str(file_path),
+            profile_id=request.profile_id,
+        )
+
+        logger.info(
+            f"Started import job {job_id} for upload {request.upload_id} "
+            f"(profile: {request.profile_id})"
+        )
+
+        return ImportResponse(
+            success=True,
+            job_id=job_id,
+            rows_processed=0,
+            rows_added=0,
+            rows_skipped=0,
+            errors=[],
+            message=f"Import job started. Monitor progress at /api/import/status/{job_id}"
+        )
+
+    @app.get("/api/import/status/{job_id}", response_model=ImportStatusResponse)
+    async def get_import_status(job_id: str):
+        """Get the status of an import job.
+
+        Args:
+            job_id: The unique job identifier returned from POST /api/import
+
+        Returns:
+            ImportStatusResponse with current job status and progress
+
+        Raises:
+            HTTPException: 404 if job_id not found
+        """
+        tracker = get_tracker()
+        job = await tracker.get_job(job_id)
+
+        if not job:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Job {job_id} not found"
+            )
+
+        return ImportStatusResponse(
+            job_id=job.job_id,
+            status=job.status,
+            progress=job.progress,
+            rows_processed=job.metadata.get("rows_processed", 0) if job.metadata else 0,
+            rows_added=job.metadata.get("rows_added", 0) if job.metadata else 0,
+            rows_skipped=job.metadata.get("rows_skipped", 0) if job.metadata else 0,
             errors=job.errors,
             started_at=job.started_at,
             completed_at=job.completed_at,
