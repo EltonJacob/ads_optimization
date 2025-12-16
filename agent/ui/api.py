@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -18,6 +18,7 @@ from agent.jobs import fetch_reports, import_spreadsheet
 from agent.jobs.job_tracker import JobStatus, get_tracker
 from agent.ui import file_utils
 from agent.ui.models import (
+    DataSourceResponse,
     FetchRequest,
     FetchResponse,
     FetchStatusResponse,
@@ -26,6 +27,9 @@ from agent.ui.models import (
     ImportRequest,
     ImportResponse,
     ImportStatusResponse,
+    KeywordListResponse,
+    PerformanceSummary,
+    TrendResponse,
     UploadResponse,
     UploadValidationError,
 )
@@ -500,6 +504,169 @@ def register_routes(app: FastAPI) -> None:
             started_at=job.started_at,
             completed_at=job.completed_at,
         )
+
+    # ========================================================================
+    # PERFORMANCE QUERY ENDPOINTS
+    # ========================================================================
+
+    @app.get("/api/performance/{profile_id}/summary", response_model=PerformanceSummary)
+    async def get_performance_summary(
+        profile_id: str,
+        start_date: date,
+        end_date: date,
+    ):
+        """Get aggregated performance summary for a profile.
+
+        This endpoint returns overall performance metrics aggregated across
+        all keywords for the specified date range.
+
+        Args:
+            profile_id: Amazon Ads profile ID
+            start_date: Start date for query (YYYY-MM-DD)
+            end_date: End date for query (YYYY-MM-DD)
+
+        Returns:
+            PerformanceSummary with aggregated metrics
+
+        Example:
+            GET /api/performance/profile_123/summary?start_date=2025-11-01&end_date=2025-11-30
+        """
+        from agent.data import dao
+
+        summary = dao.get_performance_summary(profile_id, start_date, end_date)
+
+        return PerformanceSummary(**summary)
+
+    @app.get("/api/performance/{profile_id}/keywords", response_model=KeywordListResponse)
+    async def get_keywords(
+        profile_id: str,
+        start_date: date,
+        end_date: date,
+        page: int = 1,
+        page_size: int = 50,
+        sort_by: str = "spend",
+        sort_order: str = "desc",
+    ):
+        """Get keyword-level performance data with pagination and sorting.
+
+        This endpoint returns performance data for individual keywords,
+        with support for pagination and sorting.
+
+        Args:
+            profile_id: Amazon Ads profile ID
+            start_date: Start date for query (YYYY-MM-DD)
+            end_date: End date for query (YYYY-MM-DD)
+            page: Page number (1-indexed, default: 1)
+            page_size: Number of results per page (default: 50)
+            sort_by: Field to sort by (spend, sales, clicks, impressions, acos)
+            sort_order: Sort order (asc, desc)
+
+        Returns:
+            KeywordListResponse with paginated keyword data
+
+        Example:
+            GET /api/performance/profile_123/keywords?start_date=2025-11-01&end_date=2025-11-30&page=1&page_size=50&sort_by=spend&sort_order=desc
+        """
+        from agent.data import dao
+
+        keywords, total_count = dao.query_keywords(
+            profile_id=profile_id,
+            start_date=start_date,
+            end_date=end_date,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+        return KeywordListResponse(
+            profile_id=profile_id,
+            keywords=keywords,
+            total_count=total_count,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+    @app.get("/api/performance/{profile_id}/trends", response_model=TrendResponse)
+    async def get_trends(
+        profile_id: str,
+        start_date: date,
+        end_date: date,
+        group_by: str = "day",
+    ):
+        """Get performance trend data over time.
+
+        This endpoint returns time-series performance data grouped by
+        day, week, or month for charting and trend analysis.
+
+        Args:
+            profile_id: Amazon Ads profile ID
+            start_date: Start date for trends (YYYY-MM-DD)
+            end_date: End date for trends (YYYY-MM-DD)
+            group_by: Grouping period (day, week, month)
+
+        Returns:
+            TrendResponse with time-series data points
+
+        Example:
+            GET /api/performance/profile_123/trends?start_date=2025-11-01&end_date=2025-11-30&group_by=day
+        """
+        from agent.data import dao
+
+        if group_by not in ("day", "week", "month"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid group_by value: {group_by}. Must be 'day', 'week', or 'month'"
+            )
+
+        trends = dao.query_trends(
+            profile_id=profile_id,
+            start_date=start_date,
+            end_date=end_date,
+            group_by=group_by,
+        )
+
+        return TrendResponse(
+            profile_id=profile_id,
+            start_date=start_date,
+            end_date=end_date,
+            group_by=group_by,
+            data_points=trends,
+        )
+
+    @app.get("/api/performance/{profile_id}/sources", response_model=DataSourceResponse)
+    async def get_data_sources(
+        profile_id: str,
+        start_date: date,
+        end_date: date,
+    ):
+        """Get information about data sources for a date range.
+
+        This endpoint shows which data came from the Amazon Ads API vs.
+        uploaded spreadsheets, helping identify data gaps.
+
+        Args:
+            profile_id: Amazon Ads profile ID
+            start_date: Start date for query (YYYY-MM-DD)
+            end_date: End date for query (YYYY-MM-DD)
+
+        Returns:
+            DataSourceResponse with source breakdown
+
+        Example:
+            GET /api/performance/profile_123/sources?start_date=2025-11-01&end_date=2025-11-30
+        """
+        from agent.data import dao
+
+        sources = dao.get_data_sources(
+            profile_id=profile_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        return DataSourceResponse(**sources)
 
 
 # Create the app instance

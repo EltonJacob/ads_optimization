@@ -218,6 +218,89 @@ class PerformanceQueryParams(BaseModel):
     group_by: Optional[str] = Field(default="day", pattern="^(day|week|month)$")
 
 
+class PerformanceDataResponse(BaseModel):
+    """Response for performance data query."""
+    profile_id: str
+    start_date: date
+    end_date: date
+    data: list[KeywordPerformance]
+    total_records: int
+    summary: PerformanceSummary
+
+
+class KeywordListItem(BaseModel):
+    """Keyword list item with aggregated performance."""
+    keyword_id: str
+    keyword_text: str
+    match_type: str
+    campaign_name: Optional[str] = None
+    ad_group_name: Optional[str] = None
+    state: str
+    bid: Optional[Decimal] = None
+    impressions: int
+    clicks: int
+    spend: Decimal
+    sales: Decimal
+    orders: int
+    cpc: Optional[Decimal] = None
+    ctr: Optional[Decimal] = None
+    acos: Optional[Decimal] = None
+    roas: Optional[Decimal] = None
+    conversion_rate: Optional[Decimal] = None
+
+
+class KeywordListResponse(BaseModel):
+    """Response for keyword list query with pagination."""
+    profile_id: str
+    keywords: list[KeywordListItem]
+    total_count: int
+    page: int = 1
+    page_size: int = 50
+    sort_by: str = "spend"
+    sort_order: str = "desc"
+
+
+class TrendDataPoint(BaseModel):
+    """Single data point in trend series."""
+    date: date
+    impressions: int
+    clicks: int
+    spend: Decimal
+    sales: Decimal
+    orders: int
+    acos: Optional[Decimal] = None
+    roas: Optional[Decimal] = None
+    ctr: Optional[Decimal] = None
+
+
+class TrendResponse(BaseModel):
+    """Response for trend data query."""
+    profile_id: str
+    start_date: date
+    end_date: date
+    group_by: str
+    data_points: list[TrendDataPoint]
+
+
+class DataSourceInfo(BaseModel):
+    """Information about data source for a date range."""
+    start_date: date
+    end_date: date
+    source: DataSource
+    record_count: int
+
+
+class DataSourceResponse(BaseModel):
+    """Response showing data sources by date range."""
+    profile_id: str
+    sources: list[DataSourceInfo]
+    total_records: int
+    api_records: int
+    upload_records: int
+    date_range_start: date
+    date_range_end: date
+
+
 # ============================================================================
 # Recommendation Models
 # ============================================================================
