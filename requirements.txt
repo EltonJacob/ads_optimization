@@ -11,3 +11,5 @@ sqlalchemy[asyncio]>=2.0,<3.0
 aiosqlite>=0.20,<0.21
 asyncpg>=0.29,<0.30
 openpyxl>=3.1,<4.0
+amazon-ads-api>=1.0,<2.0
+requests>=2.32,<3.0
